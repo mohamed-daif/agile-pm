@@ -1,5 +1,16 @@
-"""CLI for Agile-PM."""
+"""CLI module for Agile PM Agents.
 
-from agile_pm.cli.main import app, main
+Implements P4-006: Advanced CLI commands.
+"""
 
-__all__ = ["app", "main"]
+from .main import app, main
+from .commands import crew, memory, trace, config
+
+__all__ = [
+    "app",
+    "main",
+    "crew",
+    "memory",
+    "trace",
+    "config",
+]

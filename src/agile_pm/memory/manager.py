@@ -1,198 +1,432 @@
-"""Memory manager implementation."""
+"""Memory manager for orchestrating all memory types.
 
-from __future__ import annotations
+Provides unified interface for memory operations.
+"""
 
-from pathlib import Path
-from typing import Any
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Any, Optional
+from uuid import uuid4
 
-from pydantic import BaseModel
+from langchain_core.language_models import BaseChatModel
+from langchain_core.embeddings import Embeddings
+from langchain_core.vectorstores import VectorStore
+from pydantic import BaseModel, Field
 
-from agile_pm.core.config import MemoryConfig
+from .buffer import BufferMemory, BufferConfig
+from .summary import SummaryMemory, SummaryConfig
+from .entity import EntityMemory, EntityConfig
+from .vector_store import VectorStoreMemory, VectorStoreConfig
+from .persistence import MemoryPersistence, MemoryRecord
 
 
-class Memory(BaseModel):
-    """A single memory entry."""
+class MemoryManagerConfig(BaseModel):
+    """Configuration for memory manager."""
 
-    key: str
-    value: Any
-    created_at: datetime
-    updated_at: datetime
-    metadata: dict[str, Any] = {}
+    enable_buffer: bool = Field(default=True)
+    enable_summary: bool = Field(default=True)
+    enable_entity: bool = Field(default=True)
+    enable_vector: bool = Field(default=False)  # Requires embeddings
+    
+    buffer_config: BufferConfig = Field(default_factory=BufferConfig)
+    summary_config: SummaryConfig = Field(default_factory=SummaryConfig)
+    entity_config: EntityConfig = Field(default_factory=EntityConfig)
+    vector_config: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
+    
+    auto_save_interval: int = Field(default=60, description="Seconds between auto-saves")
+    session_ttl_hours: int = Field(default=24, description="Session expiration hours")
 
 
 class MemoryManager:
-    """Manages persistent memory for Agile-PM agents."""
+    """Unified memory manager for Agile-PM agents.
+    
+    Orchestrates:
+    - BufferMemory: Short-term conversation buffer
+    - SummaryMemory: Long-term summarization
+    - EntityMemory: Entity extraction and tracking
+    - VectorStoreMemory: Semantic retrieval
+    - Persistence: PostgreSQL storage
+    """
 
-    def __init__(self, config: MemoryConfig) -> None:
+    def __init__(
+        self,
+        session_id: Optional[str] = None,
+        llm: Optional[BaseChatModel] = None,
+        embeddings: Optional[Embeddings] = None,
+        vector_store: Optional[VectorStore] = None,
+        persistence: Optional[MemoryPersistence] = None,
+        config: Optional[MemoryManagerConfig] = None,
+    ):
         """Initialize memory manager.
         
         Args:
-            config: Memory configuration
+            session_id: Session identifier (auto-generated if not provided)
+            llm: Language model for summary/entity extraction
+            embeddings: Embedding model for vector store
+            vector_store: Vector store instance
+            persistence: Persistence backend
+            config: Manager configuration
         """
-        self.config = config
-        self._store: dict[str, Memory] = {}
-        self._initialized = False
-
-    def _ensure_initialized(self) -> None:
-        """Ensure the memory store is initialized."""
-        if self._initialized:
-            return
+        self.session_id = session_id or str(uuid4())
+        self.config = config or MemoryManagerConfig()
+        self.llm = llm
+        self.embeddings = embeddings
+        self.persistence = persistence
+        self.created_at = datetime.utcnow()
+        self.last_saved_at: Optional[datetime] = None
         
-        if self.config.backend == "sqlite":
-            self._init_sqlite()
-        # Future: Add postgresql, redis backends
+        # Initialize memory components
+        self._buffer: Optional[BufferMemory] = None
+        self._summary: Optional[SummaryMemory] = None
+        self._entity: Optional[EntityMemory] = None
+        self._vector: Optional[VectorStoreMemory] = None
         
-        self._initialized = True
-
-    def _init_sqlite(self) -> None:
-        """Initialize SQLite backend."""
-        import sqlite3
-        
-        db_path = Path(self.config.path)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS memories (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                created_at TEXT,
-                updated_at TEXT,
-                metadata TEXT
+        # Initialize enabled components
+        if self.config.enable_buffer:
+            self._buffer = BufferMemory(
+                session_id=self.session_id,
+                config=self.config.buffer_config,
             )
-        """)
-        conn.commit()
-        conn.close()
-
-    def store(self, key: str, value: Any, metadata: dict[str, Any] | None = None) -> Memory:
-        """Store a memory.
+        
+        if self.config.enable_summary and llm:
+            self._summary = SummaryMemory(
+                llm=llm,
+                session_id=self.session_id,
+                config=self.config.summary_config,
+            )
+        
+        if self.config.enable_entity and llm:
+            self._entity = EntityMemory(
+                llm=llm,
+                session_id=self.session_id,
+                config=self.config.entity_config,
+            )
+        
+        if self.config.enable_vector and embeddings and vector_store:
+            self._vector = VectorStoreMemory(
+                embeddings=embeddings,
+                vector_store=vector_store,
+                session_id=self.session_id,
+                config=self.config.vector_config,
+            )
+    
+    @property
+    def buffer(self) -> Optional[BufferMemory]:
+        """Get buffer memory."""
+        return self._buffer
+    
+    @property
+    def summary(self) -> Optional[SummaryMemory]:
+        """Get summary memory."""
+        return self._summary
+    
+    @property
+    def entity(self) -> Optional[EntityMemory]:
+        """Get entity memory."""
+        return self._entity
+    
+    @property
+    def vector(self) -> Optional[VectorStoreMemory]:
+        """Get vector store memory."""
+        return self._vector
+    
+    async def add_interaction(
+        self,
+        user_message: str,
+        ai_response: str,
+        task_context: Optional[str] = None,
+        extract_entities: bool = True,
+    ) -> None:
+        """Add a complete interaction to all memory types.
         
         Args:
-            key: Unique key for the memory
-            value: Value to store
-            metadata: Optional metadata
+            user_message: User's message
+            ai_response: AI's response
+            task_context: Optional task context
+            extract_entities: Whether to extract entities
+        """
+        # Add to buffer
+        if self._buffer:
+            self._buffer.add_user_message(user_message)
+            self._buffer.add_ai_message(ai_response)
+        
+        # Add to summary
+        if self._summary:
+            self._summary.save_context(
+                {"input": user_message},
+                {"output": ai_response},
+            )
+        
+        # Extract and add entities
+        if self._entity and extract_entities:
+            combined = f"User: {user_message}\nAssistant: {ai_response}"
+            await self._entity.extract_entities(combined)
+        
+        # Add to vector store
+        if self._vector:
+            await self._vector.add_conversation(
+                user_message=user_message,
+                ai_response=ai_response,
+                task_context=task_context,
+            )
+        
+        # Auto-save if needed
+        await self._auto_save_if_needed()
+    
+    def get_context(self, max_tokens: int = 4000) -> dict[str, Any]:
+        """Get combined context from all memory types.
+        
+        Args:
+            max_tokens: Maximum tokens for context
             
         Returns:
-            The stored memory
+            Dict with context from each memory type
         """
-        self._ensure_initialized()
+        context: dict[str, Any] = {}
+        token_budget = max_tokens
         
-        now = datetime.utcnow()
-        existing = self._store.get(key)
+        # Add buffer context (most recent, highest priority)
+        if self._buffer:
+            buffer_vars = self._buffer.load_memory_variables({})
+            context["chat_history"] = buffer_vars.get(
+                self.config.buffer_config.memory_key, []
+            )
+            # Rough token estimate
+            token_budget -= len(str(context["chat_history"])) // 4
         
-        memory = Memory(
-            key=key,
-            value=value,
-            created_at=existing.created_at if existing else now,
-            updated_at=now,
-            metadata=metadata or {},
+        # Add summary (compressed history)
+        if self._summary and token_budget > 500:
+            summary_vars = self._summary.load_memory_variables({})
+            context["summary"] = summary_vars.get(
+                self.config.summary_config.memory_key, ""
+            )
+            token_budget -= len(context["summary"]) // 4
+        
+        # Add entity context
+        if self._entity and token_budget > 200:
+            context["entities"] = self._entity.get_context_string()
+            token_budget -= len(context["entities"]) // 4
+        
+        return context
+    
+    async def get_relevant_context(
+        self,
+        query: str,
+        max_tokens: int = 2000,
+    ) -> str:
+        """Get relevant context for a query via semantic search.
+        
+        Args:
+            query: Query to find context for
+            max_tokens: Maximum tokens
+            
+        Returns:
+            Relevant context string
+        """
+        if self._vector:
+            return await self._vector.get_relevant_context(query, max_tokens)
+        return ""
+    
+    async def save(self) -> list[str]:
+        """Save all memory to persistence.
+        
+        Returns:
+            List of saved record IDs
+        """
+        if not self.persistence:
+            return []
+        
+        record_ids: list[str] = []
+        expires_at = datetime.utcnow() + timedelta(
+            hours=self.config.session_ttl_hours
         )
         
-        self._store[key] = memory
-        self._persist(memory)
+        # Save buffer
+        if self._buffer:
+            record = MemoryRecord(
+                session_id=self.session_id,
+                memory_type="buffer",
+                data=self._buffer.to_dict(),
+                expires_at=expires_at,
+            )
+            record_id = await self.persistence.save(record)
+            record_ids.append(record_id)
         
-        return memory
-
-    def recall(self, key: str) -> Memory | None:
-        """Recall a memory.
+        # Save summary
+        if self._summary:
+            record = MemoryRecord(
+                session_id=self.session_id,
+                memory_type="summary",
+                data=self._summary.to_dict(),
+                expires_at=expires_at,
+            )
+            record_id = await self.persistence.save(record)
+            record_ids.append(record_id)
+        
+        # Save entity
+        if self._entity:
+            record = MemoryRecord(
+                session_id=self.session_id,
+                memory_type="entity",
+                data=self._entity.to_dict(),
+                expires_at=expires_at,
+            )
+            record_id = await self.persistence.save(record)
+            record_ids.append(record_id)
+        
+        # Save vector store metadata
+        if self._vector:
+            record = MemoryRecord(
+                session_id=self.session_id,
+                memory_type="vector",
+                data=self._vector.to_dict(),
+                expires_at=expires_at,
+            )
+            record_id = await self.persistence.save(record)
+            record_ids.append(record_id)
+        
+        self.last_saved_at = datetime.utcnow()
+        return record_ids
+    
+    async def load(self) -> bool:
+        """Load memory from persistence.
+        
+        Returns:
+            True if any memory was loaded
+        """
+        if not self.persistence:
+            return False
+        
+        records = await self.persistence.load_by_session(self.session_id)
+        
+        if not records:
+            return False
+        
+        for record in records:
+            if record.memory_type == "buffer" and self.config.enable_buffer:
+                self._buffer = BufferMemory.from_dict(record.data)
+            
+            elif record.memory_type == "summary" and self.config.enable_summary and self.llm:
+                self._summary = SummaryMemory.from_dict(record.data, self.llm)
+            
+            elif record.memory_type == "entity" and self.config.enable_entity and self.llm:
+                self._entity = EntityMemory.from_dict(record.data, self.llm)
+        
+        return True
+    
+    async def clear(self, persist: bool = True) -> None:
+        """Clear all memory.
         
         Args:
-            key: Key to recall
-            
-        Returns:
-            The memory if found, None otherwise
+            persist: Whether to also clear persisted data
         """
-        self._ensure_initialized()
-        return self._store.get(key) or self._load(key)
-
-    def forget(self, key: str) -> bool:
-        """Forget a memory.
+        if self._buffer:
+            self._buffer.clear()
+        
+        if self._summary:
+            self._summary.clear()
+        
+        if self._entity:
+            self._entity.clear()
+        
+        if self._vector:
+            await self._vector.clear()
+        
+        if persist and self.persistence:
+            from .persistence import PostgresMemoryStore
+            if isinstance(self.persistence, PostgresMemoryStore):
+                await self.persistence.delete_by_session(self.session_id)
+    
+    async def _auto_save_if_needed(self) -> None:
+        """Auto-save if interval has elapsed."""
+        if not self.persistence:
+            return
+        
+        if self.last_saved_at is None:
+            await self.save()
+            return
+        
+        elapsed = (datetime.utcnow() - self.last_saved_at).total_seconds()
+        if elapsed >= self.config.auto_save_interval:
+            await self.save()
+    
+    def get_stats(self) -> dict[str, Any]:
+        """Get memory statistics.
+        
+        Returns:
+            Dict with memory statistics
+        """
+        stats: dict[str, Any] = {
+            "session_id": self.session_id,
+            "created_at": self.created_at.isoformat(),
+            "last_saved_at": self.last_saved_at.isoformat() if self.last_saved_at else None,
+        }
+        
+        if self._buffer:
+            stats["buffer"] = {
+                "message_count": self._buffer.message_count,
+                "max_messages": self._buffer.config.max_messages,
+            }
+        
+        if self._summary:
+            stats["summary"] = {
+                "summary_length": len(self._summary.summary),
+                "max_tokens": self._summary.config.max_token_limit,
+            }
+        
+        if self._entity:
+            stats["entity"] = {
+                "entity_count": self._entity.entity_count,
+                "max_entities": self._entity.config.max_entities,
+            }
+        
+        if self._vector:
+            stats["vector"] = {
+                "document_count": self._vector.document_count,
+                "top_k": self._vector.config.top_k,
+            }
+        
+        return stats
+    
+    @classmethod
+    async def create_with_persistence(
+        cls,
+        connection_string: str,
+        session_id: Optional[str] = None,
+        llm: Optional[BaseChatModel] = None,
+        embeddings: Optional[Embeddings] = None,
+        vector_store: Optional[VectorStore] = None,
+        config: Optional[MemoryManagerConfig] = None,
+        load_existing: bool = True,
+    ) -> "MemoryManager":
+        """Create memory manager with PostgreSQL persistence.
         
         Args:
-            key: Key to forget
+            connection_string: PostgreSQL connection string
+            session_id: Session identifier
+            llm: Language model
+            embeddings: Embedding model
+            vector_store: Vector store
+            config: Manager configuration
+            load_existing: Whether to load existing session data
             
         Returns:
-            True if memory was forgotten, False if not found
+            Configured MemoryManager
         """
-        self._ensure_initialized()
+        from .persistence import PostgresMemoryStore
         
-        if key in self._store:
-            del self._store[key]
-            self._delete(key)
-            return True
-        return False
-
-    def list_memories(self, prefix: str | None = None) -> list[str]:
-        """List all memory keys.
+        persistence = PostgresMemoryStore(connection_string)
+        await persistence.connect()
         
-        Args:
-            prefix: Optional prefix filter
-            
-        Returns:
-            List of memory keys
-        """
-        self._ensure_initialized()
+        manager = cls(
+            session_id=session_id,
+            llm=llm,
+            embeddings=embeddings,
+            vector_store=vector_store,
+            persistence=persistence,
+            config=config,
+        )
         
-        keys = list(self._store.keys())
-        if prefix:
-            keys = [k for k in keys if k.startswith(prefix)]
-        return keys
-
-    def _persist(self, memory: Memory) -> None:
-        """Persist memory to backend."""
-        import json
-        import sqlite3
+        if load_existing and session_id:
+            await manager.load()
         
-        if self.config.backend == "sqlite":
-            conn = sqlite3.connect(self.config.path)
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO memories (key, value, created_at, updated_at, metadata)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                memory.key,
-                json.dumps(memory.value),
-                memory.created_at.isoformat(),
-                memory.updated_at.isoformat(),
-                json.dumps(memory.metadata),
-            ))
-            conn.commit()
-            conn.close()
-
-    def _load(self, key: str) -> Memory | None:
-        """Load memory from backend."""
-        import json
-        import sqlite3
-        
-        if self.config.backend == "sqlite":
-            conn = sqlite3.connect(self.config.path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM memories WHERE key = ?", (key,))
-            row = cursor.fetchone()
-            conn.close()
-            
-            if row:
-                memory = Memory(
-                    key=row[0],
-                    value=json.loads(row[1]),
-                    created_at=datetime.fromisoformat(row[2]),
-                    updated_at=datetime.fromisoformat(row[3]),
-                    metadata=json.loads(row[4]),
-                )
-                self._store[key] = memory
-                return memory
-        
-        return None
-
-    def _delete(self, key: str) -> None:
-        """Delete memory from backend."""
-        import sqlite3
-        
-        if self.config.backend == "sqlite":
-            conn = sqlite3.connect(self.config.path)
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM memories WHERE key = ?", (key,))
-            conn.commit()
-            conn.close()
+        return manager

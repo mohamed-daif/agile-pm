@@ -1,5 +1,21 @@
-"""Crew orchestration for Agile-PM."""
+"""Crews module for multi-agent collaboration.
 
-from agile_pm.crews.manager import CrewManager
+Implements P4-002: Multi-agent collaboration workflows.
+"""
 
-__all__ = ["CrewManager"]
+from .planning_crew import PlanningCrew
+from .execution_crew import ExecutionCrew
+from .review_crew import ReviewCrew
+from .collaboration import AgentMessage, CollaborationHub
+from .consensus import ConsensusStrategy, VotingConsensus, LeaderConsensus
+
+__all__ = [
+    "PlanningCrew",
+    "ExecutionCrew",
+    "ReviewCrew",
+    "AgentMessage",
+    "CollaborationHub",
+    "ConsensusStrategy",
+    "VotingConsensus",
+    "LeaderConsensus",
+]

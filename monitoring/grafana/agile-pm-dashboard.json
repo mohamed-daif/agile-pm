@@ -1,0 +1,136 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "agile-pm-overview",
+    "title": "Agile-PM Overview",
+    "tags": ["agile-pm"],
+    "timezone": "browser",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "30s",
+    "time": {"from": "now-1h", "to": "now"},
+    "panels": [
+      {
+        "id": 1,
+        "title": "Request Rate",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"agile-pm\"}[5m])",
+            "legendFormat": "{{method}} {{path}}"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Request Latency (p95)",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"agile-pm\"}[5m]))",
+            "legendFormat": "p95"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Error Rate",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{job=\"agile-pm\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"agile-pm\"}[5m])) * 100",
+            "legendFormat": "Error %"
+          }
+        ],
+        "options": {"colorMode": "value", "graphMode": "area"}
+      },
+      {
+        "id": 4,
+        "title": "Active Agents",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+        "targets": [
+          {
+            "expr": "agents_active_total{job=\"agile-pm\"}",
+            "legendFormat": "Active"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Queue Depth",
+        "type": "gauge",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
+        "targets": [
+          {
+            "expr": "celery_queue_length{job=\"agile-pm\"}",
+            "legendFormat": "{{queue}}"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Webhook Deliveries",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+        "targets": [
+          {
+            "expr": "rate(webhook_deliveries_total{job=\"agile-pm\"}[5m])",
+            "legendFormat": "{{status}}"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Database Connections",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+        "targets": [
+          {
+            "expr": "database_pool_connections{job=\"agile-pm\"}",
+            "legendFormat": "{{state}}"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Tasks by Status",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 20},
+        "targets": [
+          {
+            "expr": "tasks_by_status{job=\"agile-pm\"}",
+            "legendFormat": "{{status}}"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Memory Usage",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 8, "x": 8, "y": 20},
+        "targets": [
+          {
+            "expr": "process_resident_memory_bytes{job=\"agile-pm\"}",
+            "legendFormat": "RSS"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "CPU Usage",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 8, "x": 16, "y": 20},
+        "targets": [
+          {
+            "expr": "rate(process_cpu_seconds_total{job=\"agile-pm\"}[5m])",
+            "legendFormat": "CPU"
+          }
+        ]
+      }
+    ]
+  }
+}

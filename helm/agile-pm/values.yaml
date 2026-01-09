@@ -1,0 +1,102 @@
+# Default values for agile-pm
+
+replicaCount:
+  api: 3
+  worker: 2
+
+image:
+  repository: ghcr.io/mohamed-daif/agile-pm
+  tag: latest
+  pullPolicy: Always
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: agile-pm.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: agile-pm-tls
+      hosts:
+        - agile-pm.example.com
+
+resources:
+  api:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  worker:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+autoscaling:
+  api:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  worker:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+config:
+  logLevel: INFO
+  logFormat: json
+  apiHost: "0.0.0.0"
+  apiPort: 8000
+  tracingEnabled: true
+  tracingSampleRate: "0.1"
+  metricsEnabled: true
+
+secrets:
+  # Use external secrets in production
+  databaseUrl: ""
+  redisUrl: ""
+  jwtSecretKey: ""
+  apiKey: ""
+
+externalSecrets:
+  enabled: false
+  secretStore: vault-backend
+  refreshInterval: 1h
+
+postgresql:
+  enabled: false  # Use external database in production
+  auth:
+    database: agile_pm
+    username: agile_pm
+
+redis:
+  enabled: false  # Use external Redis in production
+  architecture: standalone
+
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s

@@ -1,87 +1,104 @@
-"""Task management endpoints."""
+"""Task management router with repository integration."""
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
-from datetime import datetime
-from enum import Enum
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-router = APIRouter()
+from agile_pm.api.dependencies import get_unit_of_work
+from agile_pm.storage.repositories.unit_of_work import UnitOfWork
+from agile_pm.storage.schemas import (
+    TaskCreate, TaskUpdate, TaskResponse, TaskListResponse
+)
+from agile_pm.observability.tracing import get_tracer
 
-class TaskStatus(str, Enum):
-    TODO = "todo"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+router = APIRouter(prefix="/tasks", tags=["tasks"])
+tracer = get_tracer(__name__)
 
-class TaskPriority(str, Enum):
-    P0 = "P0"
-    P1 = "P1"
-    P2 = "P2"
-    P3 = "P3"
 
-class TaskCreate(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = None
-    priority: TaskPriority = TaskPriority.P1
-    sprint_id: Optional[str] = None
-    assignee_id: Optional[str] = None
-    tags: list = Field(default_factory=list)
-
-class TaskUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    priority: Optional[TaskPriority] = None
-    status: Optional[TaskStatus] = None
-    assignee_id: Optional[str] = None
-    tags: Optional[list] = None
-
-class TaskResponse(BaseModel):
-    id: str
-    title: str
-    description: Optional[str]
-    priority: TaskPriority
-    status: TaskStatus
-    sprint_id: Optional[str]
-    assignee_id: Optional[str]
-    tags: list
-    created_at: datetime
-    updated_at: datetime
-
-@router.get("", response_model=list)
+@router.get("", response_model=TaskListResponse)
 async def list_tasks(
-    skip: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100),
-    status: Optional[TaskStatus] = None, priority: Optional[TaskPriority] = None
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    priority: Optional[str] = None,
+    sprint_id: Optional[UUID] = None,
+    uow: UnitOfWork = Depends(get_unit_of_work),
 ):
-    """List tasks."""
-    return []
+    """List tasks with filters."""
+    with tracer.start_as_current_span("list_tasks"):
+        async with uow:
+            tasks = await uow.tasks.list(skip=skip, limit=limit)
+            total = await uow.tasks.count()
+            return TaskListResponse(
+                items=tasks,
+                total=total,
+                skip=skip,
+                limit=limit,
+            )
 
-@router.post("", response_model=TaskResponse, status_code=201)
-async def create_task(task: TaskCreate):
-    """Create task."""
-    return TaskResponse(
-        id="task-001", title=task.title, description=task.description,
-        priority=task.priority, status=TaskStatus.TODO, sprint_id=task.sprint_id,
-        assignee_id=task.assignee_id, tags=task.tags,
-        created_at=datetime.utcnow(), updated_at=datetime.utcnow()
-    )
+
+@router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+async def create_task(
+    task: TaskCreate,
+    uow: UnitOfWork = Depends(get_unit_of_work),
+):
+    """Create a new task."""
+    with tracer.start_as_current_span("create_task"):
+        async with uow:
+            db_task = await uow.tasks.create(task.model_dump())
+            await uow.commit()
+            return TaskResponse.model_validate(db_task)
+
 
 @router.get("/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str):
+async def get_task(
+    task_id: UUID,
+    uow: UnitOfWork = Depends(get_unit_of_work),
+):
     """Get task by ID."""
-    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    with tracer.start_as_current_span("get_task"):
+        async with uow:
+            task = await uow.tasks.get(task_id)
+            if not task:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Task {task_id} not found",
+                )
+            return TaskResponse.model_validate(task)
 
-@router.put("/{task_id}", response_model=TaskResponse)
-async def update_task(task_id: str, task: TaskUpdate):
-    """Update task."""
-    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-@router.post("/{task_id}/start")
-async def start_task(task_id: str):
-    """Start task."""
-    return {"task_id": task_id, "status": "started"}
+@router.patch("/{task_id}", response_model=TaskResponse)
+async def update_task(
+    task_id: UUID,
+    task: TaskUpdate,
+    uow: UnitOfWork = Depends(get_unit_of_work),
+):
+    """Update a task."""
+    with tracer.start_as_current_span("update_task"):
+        async with uow:
+            db_task = await uow.tasks.update(
+                task_id, task.model_dump(exclude_unset=True)
+            )
+            if not db_task:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Task {task_id} not found",
+                )
+            await uow.commit()
+            return TaskResponse.model_validate(db_task)
 
-@router.post("/{task_id}/cancel")
-async def cancel_task(task_id: str):
-    """Cancel task."""
-    return {"task_id": task_id, "status": "cancelled"}
+
+@router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task(
+    task_id: UUID,
+    uow: UnitOfWork = Depends(get_unit_of_work),
+):
+    """Delete a task."""
+    with tracer.start_as_current_span("delete_task"):
+        async with uow:
+            deleted = await uow.tasks.delete(task_id)
+            if not deleted:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Task {task_id} not found",
+                )
+            await uow.commit()

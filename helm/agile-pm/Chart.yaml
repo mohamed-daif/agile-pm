@@ -1,0 +1,16 @@
+apiVersion: v2
+name: agile-pm
+description: A Helm chart for Agile-PM - AI-powered project management
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - agile
+  - project-management
+  - ai
+  - agents
+maintainers:
+  - name: Mohamed Daif
+    email: mohamed.daif@example.com
+sources:
+  - https://github.com/mohamed-daif/agile-pm

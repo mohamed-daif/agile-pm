@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agile-pm
+  labels:
+    app.kubernetes.io/name: agile-pm
+    app.kubernetes.io/part-of: agile-pm

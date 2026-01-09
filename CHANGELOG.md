@@ -1,39 +1,56 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to Agile-PM will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-01-10
 
 ### Added
-- React dashboard with real-time WebSocket updates (S05-001)
-- WebSocket manager with auto-reconnect and heartbeat (S05-002)
-- E2E testing infrastructure with Docker (S05-003)
-- Performance benchmarking suite (S05-004)
-- Security hardening: input validation, rate limiting (S05-005)
-- Resilience patterns: circuit breaker, retry, health checks (S05-006)
-- CI/CD pipeline with GitHub Actions (S05-007)
-- User documentation (S05-008)
 
-### Changed
-- Improved agent orchestration performance
-- Enhanced error handling and recovery
+#### Core Features
+- Multi-agent orchestration system with role-based agents
+- RESTful API with FastAPI
+- Plugin system for extensibility
+- Webhook integration with delivery guarantees
+- Memory persistence with PostgreSQL and Redis cache
 
-### Fixed
-- Memory leak in WebSocket connections
-- Race condition in agent pool
+#### API & Authentication
+- JWT and API key authentication
+- Role-based access control (RBAC)
+- Standardized API response format
+- Cursor and page-based pagination
 
-## [0.1.0] - 2026-01-05
+#### Infrastructure
+- PostgreSQL storage with SQLAlchemy ORM
+- Redis caching and session storage
+- Celery task queue for async operations
+- Alembic database migrations
+
+#### Observability
+- OpenTelemetry tracing integration
+- Prometheus metrics endpoint
+- Grafana dashboards
+- Structured JSON logging
+- Deep health checks
+
+#### Deployment
+- Docker and docker-compose support
+- Kubernetes manifests
+- Helm chart for deployment
+- GitHub Actions CI/CD pipeline
+
+### Security
+- Input validation on all endpoints
+- Tenant isolation
+- Secret management with External Secrets Operator
+- Security headers and CORS configuration
+
+## [0.1.0] - 2025-12-01
 
 ### Added
-- Initial release
-- CLI tool with `init`, `plan`, `execute` commands
-- Multi-agent orchestration
-- Basic sprint and task management
-- Memory persistence with Redis/PostgreSQL
-- OpenAI integration
-
-[Unreleased]: https://github.com/mohamed-daif/agile-pm/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/mohamed-daif/agile-pm/releases/tag/v0.1.0
+- Initial project structure
+- Basic agent implementation
+- CLI interface
+- Configuration management

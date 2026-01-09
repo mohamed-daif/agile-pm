@@ -74,7 +74,7 @@ docs = [
 ]
 
 [project.scripts]
-agile-pm = "agile_pm.cli.main:cli"
+agile-pm = "agile_pm.cli.main:app"
 
 [project.urls]
 Homepage = "https://github.com/mohamed-daif/agile-pm"

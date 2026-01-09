@@ -1,0 +1,78 @@
+version: "3.8"
+
+services:
+  # PostgreSQL for persistence
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: agilepm
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: agilepm_test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agilepm -d agilepm_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+
+  # Redis for caching and pub/sub
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Agile-PM API Server (for E2E tests)
+  agile-pm-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://agilepm:testpass@postgres:5432/agilepm_test
+      - REDIS_URL=redis://redis:6379/0
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-test}
+      - LOG_LEVEL=DEBUG
+      - ENVIRONMENT=test
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # E2E Test Runner
+  e2e-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      - API_BASE_URL=http://agile-pm-api:8001
+      - DATABASE_URL=postgresql://agilepm:testpass@postgres:5432/agilepm_test
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      agile-pm-api:
+        condition: service_healthy
+    volumes:
+      - ./tests:/app/tests
+      - ./test-results:/app/test-results
+    command: pytest tests/e2e -v --tb=short --junitxml=test-results/e2e-results.xml
+
+volumes:
+  postgres_test_data:
+
+networks:
+  default:
+    name: agile-pm-test-network

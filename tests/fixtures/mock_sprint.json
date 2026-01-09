@@ -1,0 +1,32 @@
+{
+  "id": "sprint-005",
+  "name": "Sprint 05: Frontend Dashboard & Production Hardening",
+  "goal": "Build React dashboard frontend and harden for production",
+  "status": "active",
+  "start_date": "2026-01-20",
+  "end_date": "2026-01-27",
+  "tasks": [
+    {
+      "id": "S05-001",
+      "title": "React Dashboard Components",
+      "priority": "P0",
+      "status": "in_progress",
+      "estimated_points": 8,
+      "assignee": "Frontend Engineer Agent"
+    },
+    {
+      "id": "S05-002",
+      "title": "WebSocket Real-Time Integration",
+      "priority": "P0",
+      "status": "pending",
+      "estimated_points": 6
+    },
+    {
+      "id": "S05-003",
+      "title": "E2E Testing with Docker",
+      "priority": "P1",
+      "status": "pending",
+      "estimated_points": 6
+    }
+  ]
+}

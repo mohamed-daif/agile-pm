@@ -1,218 +1,126 @@
-"""Main CLI entry point for Agile PM Agents."""
+"""Main CLI entry point for Agile-PM."""
 
-import asyncio
-import sys
-from typing import Optional
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Annotated, Optional
 
 import typer
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
 app = typer.Typer(
     name="agile-pm",
-    help="AI-powered Agile Project Management Agents",
-    no_args_is_help=True,
+    help="AI-powered Agile project management agent framework",
+    add_completion=False,
 )
 
-console = Console()
 
-
-# Import and register command groups
-from .commands import crew, memory, trace, config
-
-app.add_typer(crew.app, name="crew", help="Manage agent crews")
-app.add_typer(memory.app, name="memory", help="Manage agent memory")
-app.add_typer(trace.app, name="trace", help="View traces and spans")
-app.add_typer(config.app, name="config", help="Configuration management")
+@app.command()
+def init(
+    path: Annotated[Optional[Path], typer.Argument(help="Project path")] = None,
+    name: Annotated[str, typer.Option("--name", "-n", help="Project name")] = "my-project",
+    project_type: Annotated[str, typer.Option("--type", "-t", help="Project type")] = "python",
+) -> None:
+    """Initialize Agile-PM in a project."""
+    from agile_pm.core.project import AgileProject
+    from agile_pm.core.config import ProjectInfo
+    
+    path = path or Path.cwd()
+    typer.echo(f"Initializing Agile-PM in {path}...")
+    
+    project = AgileProject.init(
+        root_path=path,
+        project=ProjectInfo(name=name, type=project_type),
+    )
+    
+    typer.echo("✓ Created .agile-pm/")
+    typer.echo("✓ Created config.yaml")
+    typer.echo("")
+    typer.echo("Next steps:")
+    typer.echo("  1. Edit .agile-pm/config.yaml to configure your providers")
+    typer.echo("  2. Run 'agile-pm link github_copilot' to link a provider")
+    typer.echo("  3. Run 'agile-pm sync' to sync configurations")
 
 
 @app.command()
-def version():
-    """Show version information."""
-    console.print(Panel.fit(
-        "[bold blue]Agile PM Agents[/bold blue]\n"
-        "Version: 1.0.0\n"
-        "Python: " + sys.version.split()[0],
-        title="Version Info",
-    ))
+def link(
+    provider: Annotated[str, typer.Argument(help="Provider name (github_copilot, qodo, cursor, codex)")],
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Config file path")] = None,
+) -> None:
+    """Link Agile-PM to an AI provider."""
+    from agile_pm.core.project import AgileProject
+    
+    config_path = config or Path(".agile-pm/config.yaml")
+    project = AgileProject.from_config(config_path)
+    
+    typer.echo(f"Linking to {provider}...")
+    project.link_provider(provider)
+    typer.echo(f"✓ Linked to {provider}")
 
 
 @app.command()
-def status():
-    """Show system status."""
-    from ..dashboard.metrics import MetricsCollector
+def sync(
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Config file path")] = None,
+) -> None:
+    """Sync all provider configurations."""
+    from agile_pm.core.project import AgileProject
     
-    collector = MetricsCollector()
-    metrics = collector.get_system_metrics()
+    config_path = config or Path(".agile-pm/config.yaml")
+    project = AgileProject.from_config(config_path)
     
-    table = Table(title="System Status")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green")
-    
-    table.add_row("Active Agents", str(metrics.active_agents))
-    table.add_row("Idle Agents", str(metrics.idle_agents))
-    table.add_row("Tasks Queued", str(metrics.tasks_queued))
-    table.add_row("Tasks In Progress", str(metrics.tasks_in_progress))
-    table.add_row("Completed (1h)", str(metrics.tasks_completed_last_hour))
-    table.add_row("Success Rate", f"{metrics.success_rate:.1%}")
-    table.add_row("Avg Duration", f"{metrics.avg_task_duration:.2f}s")
-    
-    console.print(table)
+    typer.echo("Syncing provider configurations...")
+    project.sync()
+    typer.echo("✓ All providers synced")
 
 
 @app.command()
-def serve(
-    host: str = typer.Option("0.0.0.0", help="Host to bind to"),
-    port: int = typer.Option(8080, help="Port to listen on"),
-    workers: int = typer.Option(4, help="Number of workers"),
-    reload: bool = typer.Option(False, help="Enable auto-reload"),
-):
-    """Start the API server."""
-    console.print(f"[bold green]Starting server on {host}:{port}...[/bold green]")
+def uninstall(
+    keep_overrides: Annotated[bool, typer.Option("--keep-overrides", "-k", help="Keep custom overrides")] = False,
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Config file path")] = None,
+) -> None:
+    """Remove Agile-PM from the project."""
+    from agile_pm.core.project import AgileProject
     
-    try:
-        import uvicorn
-        uvicorn.run(
-            "agile_pm.api:app",
-            host=host,
-            port=port,
-            workers=workers,
-            reload=reload,
-        )
-    except ImportError:
-        console.print("[red]uvicorn not installed. Run: pip install uvicorn[/red]")
-        raise typer.Exit(1)
+    config_path = config or Path(".agile-pm/config.yaml")
+    project = AgileProject.from_config(config_path)
+    
+    typer.echo("Removing Agile-PM...")
+    project.uninstall(keep_overrides=keep_overrides)
+    typer.echo("✓ Agile-PM removed")
+    
+    if keep_overrides:
+        typer.echo("  (Overrides backed up to .agile-pm-overrides-backup)")
 
 
 @app.command()
 def dashboard(
-    host: str = typer.Option("0.0.0.0", help="Host to bind to"),
-    port: int = typer.Option(8765, help="WebSocket port"),
-):
-    """Start the real-time dashboard server."""
-    from ..dashboard.server import run_dashboard_server
+    host: Annotated[str, typer.Option("--host", "-h", help="Host to bind to")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", "-p", help="Port to bind to")] = 8080,
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Config file path")] = None,
+) -> None:
+    """Start the Agile-PM dashboard."""
+    from agile_pm.core.project import AgileProject
     
-    console.print(f"[bold green]Starting dashboard on ws://{host}:{port}...[/bold green]")
+    config_path = config or Path(".agile-pm/config.yaml")
+    project = AgileProject.from_config(config_path)
     
-    async def run():
-        server = await run_dashboard_server(host=host, port=port)
-        try:
-            while True:
-                await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            await server.stop()
-    
-    asyncio.run(run())
+    typer.echo(f"Starting dashboard at http://{host}:{port}...")
+    project.dashboard.start(host=host, port=port)
 
 
 @app.command()
-def run_task(
-    task_id: str = typer.Argument(..., help="Task ID to execute"),
-    agent: str = typer.Option("auto", help="Agent to assign"),
-    dry_run: bool = typer.Option(False, help="Show what would happen"),
-):
-    """Execute a single task."""
-    console.print(f"[bold]Running task: {task_id}[/bold]")
-    
-    if dry_run:
-        console.print("[yellow]Dry run - no changes will be made[/yellow]")
-        return
-    
-    # TODO: Implement task execution
-    console.print(f"[green]Task {task_id} completed[/green]")
+def version() -> None:
+    """Show Agile-PM version."""
+    from agile_pm import __version__
+    typer.echo(f"Agile-PM v{__version__}")
 
 
-@app.command()
-def plan(
-    goal: str = typer.Argument(..., help="Sprint goal"),
-    capacity: int = typer.Option(50, help="Team capacity in story points"),
-    duration: str = typer.Option("2 weeks", help="Sprint duration"),
-    output: Optional[str] = typer.Option(None, help="Output file path"),
-):
-    """Create a sprint plan using the Planning Crew."""
-    from ..crews import PlanningCrew
-    from ..crews.planning_crew import SprintPlanInput
-    
-    console.print(f"[bold blue]Creating sprint plan...[/bold blue]")
-    console.print(f"Goal: {goal}")
-    console.print(f"Capacity: {capacity} points")
-    
-    crew = PlanningCrew()
-    input_data = SprintPlanInput(
-        sprint_goal=goal,
-        backlog_items=[],  # Would load from Obsidian
-        team_capacity=capacity,
-        sprint_duration=duration,
-    )
-    
-    result = crew.kickoff(input_data)
-    
-    if result.success:
-        console.print("[green]Sprint plan created successfully![/green]")
-        console.print(result.output)
-        
-        if output:
-            with open(output, "w") as f:
-                f.write(str(result.output))
-            console.print(f"[dim]Saved to {output}[/dim]")
-    else:
-        console.print(f"[red]Planning failed: {result.output}[/red]")
-        raise typer.Exit(1)
-
-
-@app.command()
-def review(
-    path: str = typer.Argument(..., help="File or PR to review"),
-    type: str = typer.Option("code", help="Review type: code, security, performance"),
-    output: Optional[str] = typer.Option(None, help="Output file path"),
-):
-    """Run code review using the Review Crew."""
-    from ..crews import ReviewCrew
-    from ..crews.review_crew import ReviewInput, ReviewType
-    
-    console.print(f"[bold blue]Running {type} review...[/bold blue]")
-    
-    review_type = ReviewType(type)
-    
-    crew = ReviewCrew()
-    input_data = ReviewInput(
-        title=f"Review of {path}",
-        description="Automated code review",
-        review_type=review_type,
-        files_changed=[{"path": path, "status": "modified"}],
-    )
-    
-    result = crew.kickoff(input_data)
-    
-    if result.success:
-        console.print("[green]Review completed![/green]")
-        console.print(result.output)
-        
-        if output:
-            with open(output, "w") as f:
-                f.write(str(result.output))
-    else:
-        console.print(f"[red]Review failed: {result.output}[/red]")
-
-
-@app.callback()
-def main_callback(
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
-    debug: bool = typer.Option(False, "--debug", help="Enable debug mode"),
-):
-    """Agile PM Agents - AI-powered project management."""
-    if debug:
-        import logging
-        logging.basicConfig(level=logging.DEBUG)
-    elif verbose:
-        import logging
-        logging.basicConfig(level=logging.INFO)
-
-
-def main():
+def main() -> None:
     """Main entry point."""
     app()
+
+
+# Alias for CLI entry point
+cli = main
 
 
 if __name__ == "__main__":

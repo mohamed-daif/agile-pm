@@ -1,8 +1,4 @@
-"""CLI command submodules."""
+"""CLI Commands."""
+from agile_pm.cli.commands.serve import serve
 
-from . import crew
-from . import memory
-from . import trace
-from . import config
-
-__all__ = ["crew", "memory", "trace", "config"]
+__all__ = ["serve"]
